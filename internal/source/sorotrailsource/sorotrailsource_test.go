@@ -444,6 +444,84 @@ func TestContractStats(t *testing.T) {
 	assert.Equal(t, int64(30), stats.TypeBreakdown[0].Count)
 }
 
+// TestContractStatsEdgeCases covers the inputs the happy path does not: an
+// indexer with nothing in it, a contract that has never emitted an event, an
+// empty contract ID (which aggregates everything), and an upstream failure.
+func TestContractStatsEdgeCases(t *testing.T) {
+	populated := append(makeEvents(5, 1000, "CAAA"), makeEvents(3, 2000, "CBBB")...)
+	for i := range populated[5:] {
+		populated[5+i].Type = "diagnostic"
+	}
+
+	tests := []struct {
+		name       string
+		events     []source.Event
+		contractID string
+		wantTotal  int64
+		wantFirst  int64
+		wantLast   int64
+		wantTypes  map[string]int64
+	}{
+		{
+			name:       "empty indexer has no events to summarize",
+			events:     nil,
+			contractID: "CABC",
+			wantTotal:  0,
+			wantFirst:  0,
+			wantLast:   0,
+			wantTypes:  map[string]int64{},
+		},
+		{
+			name:       "unknown contract on a populated indexer counts nothing",
+			events:     populated,
+			contractID: "CNOPE",
+			wantTotal:  0,
+			wantFirst:  0,
+			wantLast:   0,
+			wantTypes:  map[string]int64{},
+		},
+		{
+			name:       "empty contract id aggregates every contract",
+			events:     populated,
+			contractID: "",
+			wantTotal:  8,
+			wantFirst:  1000,
+			wantLast:   2002,
+			wantTypes:  map[string]int64{"contract": 5, "diagnostic": 3},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			src := newTestSource(newFakeIndexer(tt.events))
+
+			stats, err := src.ContractStats(context.Background(), tt.contractID)
+			require.NoError(t, err)
+
+			assert.Equal(t, tt.contractID, stats.ContractID, "the requested ID is echoed even when nothing matches")
+			assert.Equal(t, tt.wantTotal, stats.TotalEvents)
+			assert.Equal(t, tt.wantFirst, stats.FirstLedger)
+			assert.Equal(t, tt.wantLast, stats.LastLedger)
+
+			gotTypes := make(map[string]int64, len(stats.TypeBreakdown))
+			for _, tc := range stats.TypeBreakdown {
+				gotTypes[tc.Type] = tc.Count
+			}
+			assert.Equal(t, tt.wantTypes, gotTypes)
+		})
+	}
+
+	t.Run("upstream failure propagates", func(t *testing.T) {
+		f := newFakeIndexer(populated)
+		f.failWith = fmt.Errorf("upstream unavailable")
+		src := newTestSource(f)
+
+		_, err := src.ContractStats(context.Background(), "CAAA")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "upstream unavailable")
+	})
+}
+
 func TestEventBuckets(t *testing.T) {
 	base := time.Unix(1700001000, 0).UTC()
 	events := []source.Event{
@@ -472,6 +550,109 @@ func TestEventBuckets(t *testing.T) {
 	cStats, err := src.ContractStats(ctx, "CABC")
 	require.NoError(t, err)
 	assert.Equal(t, cStats.TotalEvents, series.TotalEvents, "bucket sum over full range must match ContractStats total")
+}
+
+// TestEventBucketsEdgeCases covers degenerate ranges, a non-positive interval,
+// an empty indexer, the half-open boundaries of each bucket, and an upstream
+// failure.
+func TestEventBucketsEdgeCases(t *testing.T) {
+	base := time.Unix(1700001000, 0).UTC()
+	eventAt := func(ledger int64, at time.Time) source.Event {
+		return source.Event{
+			ID:             fmt.Sprintf("%019d-%010d", ledger, 1),
+			ContractID:     "CABC",
+			Ledger:         ledger,
+			Type:           "contract",
+			LedgerClosedAt: at,
+		}
+	}
+
+	tests := []struct {
+		name       string
+		events     []source.Event
+		query      source.BucketQuery
+		failWith   error
+		wantCounts []int64
+		wantTotal  int64
+		wantApprox bool
+		wantErr    bool
+	}{
+		{
+			name:       "equal from and to yields no buckets",
+			query:      source.BucketQuery{From: base, To: base, Interval: time.Minute},
+			wantCounts: []int64{},
+			wantApprox: false,
+		},
+		{
+			name:       "to before from yields no buckets",
+			query:      source.BucketQuery{From: base.Add(time.Hour), To: base, Interval: time.Minute},
+			wantCounts: []int64{},
+			wantApprox: false,
+		},
+		{
+			name:       "non-positive interval yields no buckets",
+			events:     []source.Event{eventAt(1000, base)},
+			query:      source.BucketQuery{From: base, To: base.Add(time.Minute), Interval: 0},
+			wantCounts: []int64{},
+			wantApprox: false,
+		},
+		{
+			name:       "empty indexer yields zeroed contiguous buckets",
+			query:      source.BucketQuery{From: base, To: base.Add(2 * time.Minute), Interval: time.Minute},
+			wantCounts: []int64{0, 0},
+			wantTotal:  0,
+			wantApprox: false,
+		},
+		{
+			name: "bucket boundaries are half-open",
+			// An event exactly at a bucket start belongs to that bucket; an event
+			// exactly at To is excluded.
+			events: []source.Event{
+				eventAt(1000, base),
+				eventAt(1001, base.Add(30*time.Second)),
+				eventAt(1002, base.Add(time.Minute)),
+				eventAt(1003, base.Add(2*time.Minute)),
+				eventAt(1004, base.Add(3*time.Minute)), // == To, excluded
+			},
+			query:      source.BucketQuery{From: base, To: base.Add(3 * time.Minute), Interval: time.Minute},
+			wantCounts: []int64{2, 1, 1},
+			wantTotal:  4,
+			wantApprox: false,
+		},
+		{
+			name:     "upstream failure propagates",
+			query:    source.BucketQuery{From: base, To: base.Add(time.Minute), Interval: time.Minute},
+			failWith: fmt.Errorf("upstream unavailable"),
+			wantErr:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFakeIndexer(tt.events)
+			f.failWith = tt.failWith
+			src := newTestSource(f)
+
+			series, err := src.EventBuckets(context.Background(), tt.query)
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "upstream unavailable")
+				return
+			}
+
+			require.NoError(t, err)
+			require.Len(t, series.Buckets, len(tt.wantCounts))
+
+			got := make([]int64, len(series.Buckets))
+			for i, b := range series.Buckets {
+				got[i] = b.Count
+				assert.True(t, b.Start.Before(b.End), "bucket %d must be a non-empty half-open range", i)
+			}
+			assert.Equal(t, tt.wantCounts, got)
+			assert.Equal(t, tt.wantTotal, series.TotalEvents)
+			assert.Equal(t, tt.wantApprox, series.Approximate)
+		})
+	}
 }
 
 func TestStatusReportsHealth(t *testing.T) {

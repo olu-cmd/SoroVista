@@ -30,11 +30,13 @@ type stubStore struct {
 	lastEventQuery    source.EventQuery
 	lastContractQuery source.ContractQuery
 	lastBucketQuery   source.BucketQuery
+	lastEventID       string
 }
 
 func (s *stubStore) UpsertEvents(context.Context, []source.Event) (int64, error) { return 0, nil }
 
-func (s *stubStore) GetEvent(context.Context, string) (source.Event, error) {
+func (s *stubStore) GetEvent(_ context.Context, id string) (source.Event, error) {
+	s.lastEventID = id
 	return s.event, s.err
 }
 
@@ -97,6 +99,69 @@ func TestListEventsForwardsQueryAndCursor(t *testing.T) {
 	assert.Equal(t, "cursor-2", page.NextCursor)
 	// The query must reach the store unchanged.
 	assert.Equal(t, q, st.lastEventQuery)
+}
+
+// TestListEventsEdgeCases covers the edges the happy-path test above does not:
+// an unconstrained query, a single-ledger boundary window, and a store failure.
+func TestListEventsEdgeCases(t *testing.T) {
+	tests := []struct {
+		name       string
+		query      source.EventQuery
+		stubEvents []source.Event
+		stubNext   string
+		stubErr    error
+		wantEvents int
+		wantNext   string
+		wantErr    bool
+	}{
+		{
+			name:       "empty query and empty store yield an empty page",
+			query:      source.EventQuery{},
+			stubEvents: nil,
+			wantEvents: 0,
+			wantNext:   "",
+		},
+		{
+			name:       "from and to on the same ledger is a one-ledger window",
+			query:      source.EventQuery{FromLedger: 42, ToLedger: 42, Limit: 1},
+			stubEvents: []source.Event{{ID: "e42", Ledger: 42}},
+			wantEvents: 1,
+		},
+		{
+			name:       "last page carries no cursor",
+			query:      source.EventQuery{Limit: source.MaxLimit},
+			stubEvents: []source.Event{{ID: "e1"}, {ID: "e2"}},
+			wantEvents: 2,
+			wantNext:   "",
+		},
+		{
+			name:    "store failure propagates without a partial page",
+			query:   source.EventQuery{Limit: 25},
+			stubErr: errors.New("query failed"),
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st := &stubStore{events: tt.stubEvents, eventsNext: tt.stubNext, err: tt.stubErr}
+			src := New(st, healthyRPC())
+
+			page, err := src.ListEvents(context.Background(), tt.query)
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Empty(t, page.Events, "a failed query must not return a partial page")
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Len(t, page.Events, tt.wantEvents)
+			assert.Equal(t, tt.wantNext, page.NextCursor)
+			// Even an all-zero query must reach the store untouched: the store
+			// owns defaulting and clamping.
+			assert.Equal(t, tt.query, st.lastEventQuery)
+		})
+	}
 }
 
 func TestListContractsForwardsQuery(t *testing.T) {
@@ -200,6 +265,71 @@ func TestGetEventNotFoundPassesThrough(t *testing.T) {
 
 	_, err := src.GetEvent(context.Background(), "missing")
 	assert.ErrorIs(t, err, source.ErrNotFound)
+}
+
+// TestGetEventEdgeCases pins the pass-through behaviour for the inputs the
+// happy path does not exercise: an empty ID, a store error other than
+// ErrNotFound, and a zero-value event returned without error.
+func TestGetEventEdgeCases(t *testing.T) {
+	tests := []struct {
+		name      string
+		id        string
+		event     source.Event
+		err       error
+		wantID    string
+		wantErr   error
+		wantNoErr bool
+	}{
+		{
+			name:    "empty id is forwarded, not short-circuited",
+			id:      "",
+			err:     source.ErrNotFound,
+			wantID:  "",
+			wantErr: source.ErrNotFound,
+		},
+		{
+			name:      "not-found maps to ErrNotFound",
+			id:        "0000000000000000001-0000000001",
+			err:       source.ErrNotFound,
+			wantID:    "0000000000000000001-0000000001",
+			wantErr:   source.ErrNotFound,
+			wantNoErr: false,
+		},
+		{
+			name:      "an unexpected store error propagates unchanged",
+			id:        "e1",
+			err:       errors.New("database exploded"),
+			wantID:    "e1",
+			wantNoErr: false,
+		},
+		{
+			name:      "zero-value event without error is returned as-is",
+			id:        "e1",
+			event:     source.Event{},
+			wantID:    "e1",
+			wantNoErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st := &stubStore{event: tt.event, err: tt.err}
+			src := New(st, healthyRPC())
+
+			got, err := src.GetEvent(context.Background(), tt.id)
+			assert.Equal(t, tt.wantID, st.lastEventID, "the ID must be forwarded to the store verbatim")
+			if tt.wantNoErr {
+				require.NoError(t, err)
+				assert.Equal(t, tt.event, got)
+				return
+			}
+			require.Error(t, err)
+			assert.Equal(t, tt.event, got, "no event is returned alongside an error")
+			if tt.wantErr != nil {
+				assert.ErrorIs(t, err, tt.wantErr)
+			}
+		})
+	}
 }
 
 func TestStatus(t *testing.T) {

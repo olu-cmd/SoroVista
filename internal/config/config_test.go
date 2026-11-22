@@ -2,6 +2,7 @@ package config
 
 import (
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -290,6 +291,9 @@ func TestValidContractID(t *testing.T) {
 		{"too long", validContract + "A", false},
 		{"lowercase is not strkey", "c" + validContract[1:], false},
 		{"digits outside base32", validContract[:54] + "01", false},
+		{"prefix only is too short", "C", false},
+		{"all base32 payload is valid", "C" + strings.Repeat("Z", 55), true},
+		{"embedded whitespace is invalid", validContract[:20] + " " + validContract[21:], false},
 	}
 
 	for _, tt := range tests {
