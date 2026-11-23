@@ -14,6 +14,7 @@ import (
 
 	"github.com/sorotrail/sorovista/internal/config"
 	"github.com/sorotrail/sorovista/internal/source"
+	"github.com/sorotrail/sorovista/internal/tracing"
 )
 
 // Postgres implements Store on a pgx connection pool.
@@ -168,6 +169,16 @@ func (p *Postgres) QueryEvents(ctx context.Context, q source.EventQuery) ([]sour
 	}
 	if q.ToLedger > 0 {
 		where = append(where, "ledger <= "+arg(q.ToLedger))
+	}
+	// Time bounds apply to ledger_closed_at, the on-chain close time. They are
+	// inclusive at both ends and combine with the ledger bounds as an
+	// intersection (plain AND), for the same reason both filters exist: a
+	// caller narrowing by ledger and by wall-clock time means both.
+	if !q.FromTime.IsZero() {
+		where = append(where, "ledger_closed_at >= "+arg(q.FromTime.UTC()))
+	}
+	if !q.ToTime.IsZero() {
+		where = append(where, "ledger_closed_at <= "+arg(q.ToTime.UTC()))
 	}
 	if q.Cursor != "" {
 		where = append(where, "id < "+arg(q.Cursor))

@@ -29,6 +29,12 @@ const (
 	DefaultRPCURL       = "https://soroban-testnet.stellar.org"
 	DefaultPollInterval = 5 * time.Second
 	DefaultHTTPAddr     = ":8080"
+	// Tracing defaults. A 10% head rate keeps a busy chain-tip instance from
+	// flooding a collector while still producing enough traces to diagnose a
+	// slow page view.
+	DefaultOTelEndpoint    = "http://localhost:4318"
+	DefaultOTelSampleRate  = 0.1
+	DefaultOTelServiceName = "sorovista"
 	// DefaultRetentionLedgers is how far back a cold start reaches when
 	// START_LEDGER is unset — roughly 24h at ~5s per ledger. Stellar RPC
 	// retains events for about 24h to 7d, so reaching further back than the
@@ -205,6 +211,52 @@ func Load() (Config, error) {
 		cfg.LogLevel = lvl
 	}
 
+	if v := os.Getenv("OTEL_ENABLED"); v != "" {
+		enabled, err := strconv.ParseBool(v)
+		if err != nil {
+			return cfg, fmt.Errorf("invalid OTEL_ENABLED %q: want true or false", v)
+		}
+		cfg.OTelEnabled = enabled
+	}
+
+	if v := os.Getenv("OTEL_SAMPLE_RATE"); v != "" {
+		rate, err := strconv.ParseFloat(v, 64)
+		if err != nil || rate < 0 || rate > 1 {
+			return cfg, fmt.Errorf("invalid OTEL_SAMPLE_RATE %q: want a number in [0,1]", v)
+		}
+		cfg.OTelSampleRate = rate
+	}
+
+	if v := os.Getenv("RATE_LIMIT_RPS"); v != "" {
+		rps, err := strconv.ParseFloat(v, 64)
+		if err != nil || rps <= 0 {
+			return cfg, fmt.Errorf("invalid RATE_LIMIT_RPS %q: want a positive number", v)
+		}
+		cfg.RateLimitRPS = rps
+	}
+
+	if v := os.Getenv("RATE_LIMIT_BURST"); v != "" {
+		burst, err := strconv.Atoi(v)
+		if err != nil || burst <= 0 {
+			return cfg, fmt.Errorf("invalid RATE_LIMIT_BURST %q: want a positive integer", v)
+		}
+		cfg.RateLimitBurst = burst
+	}
+
+	// Both halves are required together: a rate with no burst has no defined
+	// instantaneous allowance, and a burst with no rate never refills.
+	if (cfg.RateLimitRPS == 0) != (cfg.RateLimitBurst == 0) {
+		return cfg, fmt.Errorf("RATE_LIMIT_RPS and RATE_LIMIT_BURST must be set together (leave both unset to disable rate limiting)")
+	}
+
+	if v := os.Getenv("RATE_LIMIT_TRUSTED_PROXY"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return cfg, fmt.Errorf("invalid RATE_LIMIT_TRUSTED_PROXY %q: want true or false", v)
+		}
+		cfg.RateLimitTrustedProxy = b
+	}
+
 	if err := cfg.validate(); err != nil {
 		return cfg, err
 	}
@@ -239,6 +291,9 @@ func (c Config) validate() error {
 
 	if c.HTTPAddr == "" {
 		return fmt.Errorf("HTTP_ADDR must not be empty")
+	}
+	if c.OTelEnabled && c.OTelEndpoint == "" {
+		return fmt.Errorf("OTEL_EXPORTER_OTLP_ENDPOINT must not be empty when OTEL_ENABLED=true")
 	}
 	return nil
 }
