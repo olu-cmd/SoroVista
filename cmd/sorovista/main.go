@@ -338,14 +338,14 @@ func router(src source.EventSource, log *slog.Logger, m *metrics.Metrics, cfg co
 	// which is what lets a trace and a log line be joined.
 	r.Use(middleware.Recoverer, reqid.Middleware, tracer.Middleware, requestLogger(log))
 	r.Use(api.CORSMiddleware(api.CORSConfig{Origins: cfg.CORSAllowedOrigins}))
-	// RoutePattern returns the matched chi pattern (e.g. "/api/events/{id}"),
+	// WithRoutePattern resolves the matched chi pattern (e.g. "/api/events/{id}"),
 	// not the raw path, keeping metric label cardinality bounded.
-	metrics.RoutePattern = func(req *http.Request) string {
+	m.WithRoutePattern(func(req *http.Request) string {
 		if rc := chi.RouteContext(req.Context()); rc != nil {
 			return rc.RoutePattern()
 		}
 		return ""
-	}
+	})
 	r.Use(m.Middleware)
 
 	// Mounted after request-ID and metrics so a rejected request still has a

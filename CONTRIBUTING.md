@@ -4,6 +4,10 @@ SoroVista is deliberately a small MVP core with clear seams. Most of what it
 could become is not built yet, and that is the point — the interfaces are there
 so features can be added without reworking the middle of the program.
 
+Participation in this project is governed by our
+[Code of Conduct](CODE_OF_CONDUCT.md). For reporting security vulnerabilities,
+please follow [SECURITY.md](SECURITY.md) rather than opening a public issue.
+
 ## Getting set up
 
 You need Go 1.25+ and Docker (for Postgres).
@@ -14,7 +18,8 @@ cd sorovista
 docker compose up -d postgres
 cp .env.example .env
 set -a; source .env; set +a
-make test      # tests; the store tests skip without a database
+make test      # unit tests, no database needed
+make test-race # unit tests under the Go data race detector
 make test-db   # everything, against the compose Postgres
 make run
 ```
@@ -42,7 +47,8 @@ Set `REQUIRE_DB=1` to make a missing `TEST_DATABASE_URL` fail instead of skip,
 so a job can assert that the database tests really ran rather than trusting its
 own configuration.
 
-Run `make fmt` and `make lint` before pushing.
+Run `make fmt` and `make ci` before pushing. `make ci` runs the build, vet,
+test and lint checks CI runs (see the Makefile for details).
 
 ## How the code fits together
 
@@ -140,7 +146,7 @@ channel: see [SECURITY.md](SECURITY.md) rather than the conduct process.
 
 ```sh
 git checkout -b feature/descending-pagination
-make fmt && make lint && make test
+make fmt && make ci
 git commit -m "sorotrailsource: add descending pagination"
 gh pr create --title "Add descending pagination" \
   --body "Closes #123. Test output: make test-db passes against the compose Postgres."

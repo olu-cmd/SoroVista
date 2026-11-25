@@ -38,12 +38,12 @@ Examples of unacceptable behavior include:
 
 ## Enforcement Responsibilities
 
-SoroVista's maintainers are the community leaders responsible for enforcement.
-They are responsible for clarifying and enforcing our standards of acceptable
-behavior and will take appropriate and fair corrective action in response to any
-behavior that they deem inappropriate, threatening, offensive, or harmful.
+Project maintainers are responsible for clarifying and enforcing our standards of
+acceptable behavior and will take appropriate and fair corrective action in
+response to any behavior that they deem inappropriate, threatening, offensive,
+or harmful.
 
-Community leaders have the right and responsibility to remove, edit, or reject
+Project maintainers have the right and responsibility to remove, edit, or reject
 comments, commits, code, wiki edits, issues, and other contributions that are
 not aligned to this Code of Conduct, and will communicate reasons for moderation
 decisions when appropriate.
@@ -56,31 +56,25 @@ Examples of representing our community include using an official e-mail address,
 posting via an official social media account, or acting as an appointed
 representative at an online or offline event.
 
-## Reporting
-
-Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported to the maintainers through the repository owner's GitHub profile
-contact link: <https://github.com/sorotrail>. Please use that channel rather
-than a public issue, so that a report does not become a public spectacle.
-
-This is not the vulnerability channel. Security issues go to
-[SECURITY.md](SECURITY.md), which covers exploitable defects rather than
-conduct, and the two processes are deliberately kept separate.
-
-All complaints will be reviewed and investigated promptly and fairly. All
-community leaders are obligated to respect the privacy and security of the
-reporter of any incident.
-
 ## Enforcement
 
-Maintainers acknowledge a conduct report within three business days and aim to
-reach a decision within ten business days, even when that decision is that no
-action is warranted. A report and its discussion stay private to the maintainers
-and the people involved; the reporter is told the outcome.
+Instances of abusive, harassing, or otherwise unacceptable behavior may be
+reported to the SoroVista project maintainers responsible for enforcement via
+the GitHub "Contact" link on the [`sorotrail`](https://github.com/sorotrail)
+organisation profile (please do not use the public issue tracker for conduct
+reports, and use [SECURITY.md](SECURITY.md) instead for software security
+vulnerabilities).
+
+All complaints will be reviewed and investigated promptly and fairly by the
+SoroVista project maintainers, who aim to acknowledge receipt within 72 hours
+and provide a decision or resolution within 7 days.
+
+All project maintainers are obligated to respect the privacy and security of the
+reporter of any incident.
 
 ## Enforcement Guidelines
 
-Community leaders will follow these Community Impact Guidelines in determining
+Project maintainers will follow these Community Impact Guidelines in determining
 the consequences for any action they deem in violation of this Code of Conduct:
 
 ### 1. Correction
@@ -88,7 +82,7 @@ the consequences for any action they deem in violation of this Code of Conduct:
 **Community Impact**: Use of inappropriate language or other behavior deemed
 unprofessional or unwelcome in the community.
 
-**Consequence**: A private, written warning from community leaders, providing
+**Consequence**: A private, written warning from project maintainers, providing
 clarity around the nature of the violation and an explanation of why the
 behavior was inappropriate. A public apology may be requested.
 

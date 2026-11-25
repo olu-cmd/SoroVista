@@ -27,6 +27,8 @@ type Metrics struct {
 	sincePollSec   prometheus.Gauge
 	httpDuration   *prometheus.HistogramVec
 	rateLimited    prometheus.Counter
+
+	routePattern func(*http.Request) string
 }
 
 // New returns a Metrics with its own registry, so multiple instances (e.g.
@@ -74,6 +76,18 @@ func New() *Metrics {
 	}
 	m.registry.MustRegister(m.pollsTotal, m.pollDuration, m.pollLag,
 		m.eventsIngested, m.sincePollSec, m.httpDuration, m.rateLimited)
+	return m
+}
+
+// WithRoutePattern attaches a resolver that extracts the matched route pattern
+// (for example "/api/events/{id}") from the request context after the handler
+// runs, keeping metric label cardinality bounded. It is configured as a
+// callback so this package does not import chi. Safe on a nil *Metrics.
+func (m *Metrics) WithRoutePattern(fn func(*http.Request) string) *Metrics {
+	if m == nil {
+		return nil
+	}
+	m.routePattern = fn
 	return m
 }
 
@@ -137,6 +151,8 @@ type statusRecorder struct {
 	status int
 }
 
+// WriteHeader records the status code and forwards it to the wrapped
+// ResponseWriter.
 func (r *statusRecorder) WriteHeader(code int) {
 	r.status = code
 	r.ResponseWriter.WriteHeader(code)
@@ -156,8 +172,11 @@ func (r *statusRecorder) Unwrap() http.ResponseWriter {
 }
 
 // Middleware wraps a handler with per-route HTTP duration instrumentation.
-// route should be the matched URL pattern, not the raw path, so label
-// cardinality stays bounded; use RoutePattern(r) to get it.
+// When a resolver has been wired with WithRoutePattern, it records the matched
+// URL pattern after next.ServeHTTP returns so label cardinality stays bounded.
+// When no resolver is wired (or it returns an empty string), Middleware falls
+// back to r.URL.Path as a safety net for correctness; raw-path labels have
+// unbounded cardinality and are not a mode to ship in.
 func (m *Metrics) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if m == nil {
@@ -168,15 +187,12 @@ func (m *Metrics) Middleware(next http.Handler) http.Handler {
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
 		route := r.URL.Path
-		if p := RoutePattern(r); p != "" {
-			route = p
+		if m.routePattern != nil {
+			if p := m.routePattern(r); p != "" {
+				route = p
+			}
 		}
 		m.httpDuration.WithLabelValues(route, r.Method, strconv.Itoa(rec.status)).
 			Observe(time.Since(start).Seconds())
 	})
 }
-
-// RoutePattern extracts the matched route pattern from the request
-// context. It is a function variable so this package does not import chi;
-// cmd/sorovista wires it to chi's route context.
-var RoutePattern func(*http.Request) string

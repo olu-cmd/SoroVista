@@ -66,16 +66,6 @@ func scrape(t *testing.T, m *Metrics) string {
 	return rec.Body.String()
 }
 
-// setRoutePattern swaps the package-level function variable for the duration of
-// one test and returns a restore function. Middleware calls RoutePattern
-// unguarded, so a test that drives it has to provide one; restoring it keeps
-// that requirement from leaking into tests that do not.
-func setRoutePattern(fn func(*http.Request) string) func() {
-	prev := RoutePattern
-	RoutePattern = fn
-	return func() { RoutePattern = prev }
-}
-
 // The nil contract lets call sites wire metrics unconditionally. Table-driven
 // over the exported methods so a future method without a nil guard is caught.
 func TestNilMetricsRecordsNothing(t *testing.T) {
@@ -89,7 +79,9 @@ func TestNilMetricsRecordsNothing(t *testing.T) {
 		{"RecordPoll error", func() { m.RecordPoll(false, 25*time.Millisecond) }},
 		{"SetLag", func() { m.SetLag(42) }},
 		{"TickPollAge", func() { m.TickPollAge(12.5) }},
+		{"RecordRateLimitRejection", func() { m.RecordRateLimitRejection() }},
 		{"RecordEvents", func() { m.RecordEvents(7) }},
+		{"WithRoutePattern", func() { assert.Nil(t, m.WithRoutePattern(func(*http.Request) string { return "/x" })) }},
 	}
 	for _, c := range calls {
 		t.Run(c.name, func(t *testing.T) {
@@ -157,9 +149,26 @@ func TestGaugesAndCountersReportValues(t *testing.T) {
 	assert.Contains(t, body, "sorovista_events_ingested_total 9")
 }
 
-func TestMiddlewareRecordsHandlerStatus(t *testing.T) {
-	t.Cleanup(setRoutePattern(func(*http.Request) string { return "/api/contracts/{id}" }))
+func TestMiddlewareWithoutRoutePatternFallsBackToRawPath(t *testing.T) {
+	// Constructing a Metrics without wiring WithRoutePattern must not panic
+	// and must record the request under the raw URL path as a safety net.
+	m := New()
 
+	h := m.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+	}))
+
+	rec := httptest.NewRecorder()
+	require.NotPanics(t, func() {
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/events/123", nil))
+	})
+	assert.Equal(t, http.StatusAccepted, rec.Code)
+
+	assert.Contains(t, scrape(t, m),
+		`sorovista_http_request_duration_seconds_count{method="GET",route="/api/events/123",status="202"} 1`)
+}
+
+func TestMiddlewareRecordsHandlerStatus(t *testing.T) {
 	tests := []struct {
 		name       string
 		handler    http.HandlerFunc
@@ -184,7 +193,7 @@ func TestMiddlewareRecordsHandlerStatus(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := New()
+			m := New().WithRoutePattern(func(*http.Request) string { return "/api/contracts/{id}" })
 			rec := httptest.NewRecorder()
 
 			m.Middleware(tt.handler).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/contracts/CABC", nil))
@@ -199,9 +208,7 @@ func TestMiddlewareRecordsHandlerStatus(t *testing.T) {
 	}
 
 	t.Run("falls back to the request path when no pattern is known", func(t *testing.T) {
-		t.Cleanup(setRoutePattern(func(*http.Request) string { return "" }))
-
-		m := New()
+		m := New().WithRoutePattern(func(*http.Request) string { return "" })
 		m.Middleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})).
 			ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/unmatched/path", nil))
 

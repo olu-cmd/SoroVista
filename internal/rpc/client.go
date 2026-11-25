@@ -11,6 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 )
 
 // Client is the Stellar RPC surface SoroVista uses. The ingester depends on
@@ -75,6 +76,7 @@ type jsonRPCError struct {
 	Data    any    `json:"data,omitempty"`
 }
 
+// Error returns a formatted error string describing the JSON-RPC error code and message.
 func (e *jsonRPCError) Error() string {
 	if e.Data != nil {
 		return fmt.Sprintf("rpc error %d: %s (%v)", e.Code, e.Message, e.Data)
@@ -208,9 +210,24 @@ func isXDRFormatRejection(err error) bool {
 		strings.Contains(msg, "unknown field")
 }
 
-func truncate(s string, n int) string {
-	if len(s) <= n {
+// truncate caps s at maxBytes bytes for error messages and log lines, walking
+// UTF-8 rune boundaries so a multi-byte character straddling the cut is dropped
+// whole rather than split into invalid UTF-8. Grapheme clusters are not kept
+// together.
+func truncate(s string, maxBytes int) string {
+	if len(s) <= maxBytes {
 		return s
 	}
-	return s[:n] + "…"
+	if maxBytes <= 0 {
+		return "…"
+	}
+	pos := 0
+	for pos < len(s) {
+		_, width := utf8.DecodeRuneInString(s[pos:])
+		if pos+width > maxBytes {
+			break
+		}
+		pos += width
+	}
+	return s[:pos] + "…"
 }

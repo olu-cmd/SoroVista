@@ -25,13 +25,12 @@ const secondTestContract = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2SLH34I
 func testStreamServer(src source.EventSource, broker *Broker, hb time.Duration) *httptest.Server {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	s := New(src, log).WithBroker(broker).WithHeartbeatInterval(hb)
-	m := metrics.New()
-	metrics.RoutePattern = func(req *http.Request) string {
+	m := metrics.New().WithRoutePattern(func(req *http.Request) string {
 		if rc := chi.RouteContext(req.Context()); rc != nil {
 			return rc.RoutePattern()
 		}
 		return ""
-	}
+	})
 
 	r := chi.NewRouter()
 	r.Use(m.Middleware)

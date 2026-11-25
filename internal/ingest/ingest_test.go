@@ -257,6 +257,68 @@ func TestPollOnceDoesNotAdvanceOnStoreFailure(t *testing.T) {
 	assert.Zero(t, st.savedState().LastLedger)
 }
 
+// TestWithPublisherEdgeCases pins down the attachment semantics: attaching a
+// nil publisher is safe, re-attaching replaces rather than stacks, and a later
+// nil detaches whatever was attached before.
+func TestWithPublisherEdgeCases(t *testing.T) {
+	const eventID = "0000000100-0000000001"
+
+	tests := []struct {
+		name       string
+		attach     func(a, b *recordingPublisher) []EventPublisher
+		wantFirst  []string
+		wantSecond []string
+	}{
+		{
+			name:   "no publisher attached is safe",
+			attach: func(a, b *recordingPublisher) []EventPublisher { return nil },
+		},
+		{
+			name:   "nil publisher is accepted",
+			attach: func(a, b *recordingPublisher) []EventPublisher { return []EventPublisher{nil} },
+		},
+		{
+			name:       "one publisher receives each batch",
+			attach:     func(a, b *recordingPublisher) []EventPublisher { return []EventPublisher{a} },
+			wantFirst:  []string{eventID},
+			wantSecond: nil,
+		},
+		{
+			name:       "the last attached publisher wins",
+			attach:     func(a, b *recordingPublisher) []EventPublisher { return []EventPublisher{a, b} },
+			wantFirst:  nil,
+			wantSecond: []string{eventID},
+		},
+		{
+			name:   "nil detaches an existing publisher",
+			attach: func(a, b *recordingPublisher) []EventPublisher { return []EventPublisher{a, nil} },
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := &mockRPC{
+				latest: 100,
+				responses: []rpc.GetEventsResult{
+					{Events: []rpc.Event{event(eventID, 100, "CABC")}, LatestLedger: 100},
+				},
+			}
+			st := newMockStore()
+			first, second := &recordingPublisher{}, &recordingPublisher{}
+
+			ing := newTestIngester(client, st, Options{RetentionLedgers: 50})
+			for _, p := range tt.attach(first, second) {
+				assert.Same(t, ing, ing.WithPublisher(p), "WithPublisher should return the receiver for chaining")
+			}
+
+			require.NoError(t, ing.pollOnce(context.Background()))
+			assert.Equal(t, 1, st.storedCount(), "ingestion must proceed regardless of publisher attachment")
+			assert.Equal(t, tt.wantFirst, first.events)
+			assert.Equal(t, tt.wantSecond, second.events)
+		})
+	}
+}
+
 func TestRunStopsOnContextCancel(t *testing.T) {
 	client := &mockRPC{latest: 100}
 	st := newMockStore()
