@@ -97,7 +97,7 @@ func run() error {
 		broker = api.NewBroker()
 	}
 
-	src, cleanup, startIngest, pg, err := buildSource(ctx, cfg, log, m, broker)
+	src, cleanup, startIngest, pg, err := buildSource(ctx, cfg, log, m, tracer, broker)
 	if err != nil {
 		return err
 	}
@@ -211,7 +211,7 @@ func buildSource(ctx context.Context, cfg config.Config, log *slog.Logger, m *me
 			if errors.Is(err, config.ErrNetworkUnverifiable) {
 				log.Warn("could not verify network passphrase", "error", err)
 			} else {
-				return nil, nil, nil, err
+				return nil, nil, nil, nil, err
 			}
 		}
 		log.Info("network verified", "network", cfg.Network.Name, "rpc_url", cfg.RPCURL)
