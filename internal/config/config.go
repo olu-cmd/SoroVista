@@ -97,6 +97,33 @@ type Config struct {
 	// LogLevel is the minimum slog level (debug, info, warn, error).
 	LogLevel slog.Level
 
+	// OTelEnabled turns OpenTelemetry tracing on. Off by default: an
+	// operator who sets nothing gets no exporter and no background work.
+	OTelEnabled bool
+	// OTelEndpoint is the OTLP/HTTP collector endpoint, with or without a
+	// scheme. Used only when tracing is enabled.
+	OTelEndpoint string
+	// OTelSampleRate is the head sampling ratio for new traces, in [0,1].
+	// ParentBased sampling means an inbound sampling decision is honoured
+	// regardless of this value.
+	OTelSampleRate float64
+	// OTelServiceName names this service in traces. Defaults to "sorovista".
+	OTelServiceName string
+
+	// RateLimitRPS is the sustained per-client request rate for /api, in
+	// requests per second. Zero disables rate limiting, which is the default
+	// so an existing deployment does not change behaviour on upgrade.
+	RateLimitRPS float64
+	// RateLimitBurst is the maximum instantaneous burst per client. It must
+	// be set together with RateLimitRPS; a burst smaller than one request
+	// would reject everything.
+	RateLimitBurst int
+	// RateLimitTrustedProxy makes the limiter key on the first
+	// X-Forwarded-For entry instead of the socket's remote address. That is
+	// only safe behind a proxy that overwrites the header, because a client
+	// can otherwise choose its own key.
+	RateLimitTrustedProxy bool
+
 	// PoolMaxOpenConns is the maximum number of open connections to the
 	// Postgres database. If 0, pgxpool's default is used. Set this (along
 	// with PoolMaxIdleConns) to bound the pool size relative to your
@@ -137,6 +164,9 @@ func Load() (Config, error) {
 		RetentionLedgers: DefaultRetentionLedgers,
 		HTTPAddr:         getenv("HTTP_ADDR", DefaultHTTPAddr),
 		LogLevel:         slog.LevelInfo,
+		OTelEndpoint:     getenv("OTEL_EXPORTER_OTLP_ENDPOINT", DefaultOTelEndpoint),
+		OTelSampleRate:   DefaultOTelSampleRate,
+		OTelServiceName:  getenv("OTEL_SERVICE_NAME", DefaultOTelServiceName),
 		// Pool settings default to 0 (use pgxpool defaults).
 		PoolMaxOpenConns:    parseUintEnv("POOL_MAX_OPEN_CONNS", 0),
 		PoolMaxIdleConns:    parseUintEnv("POOL_MAX_IDLE_CONNS", 0),
