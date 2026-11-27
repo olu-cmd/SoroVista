@@ -221,11 +221,11 @@ func buildSource(ctx context.Context, cfg config.Config, log *slog.Logger, m *me
 		})
 
 		ingester := ingest.New(client, pg, decode.NewXDRDecoder(), ingest.Options{
-			WatchedContracts:       cfg.WatchedContracts,
-			PollInterval:           cfg.PollInterval,
-			StartLedger:            cfg.StartLedger,
-			RetentionLedgers:       cfg.RetentionLedgers,
-			PerContractResumers:    ingest.ContractIngestSaver(pg),
+			WatchedContracts:    cfg.WatchedContracts,
+			PollInterval:        cfg.PollInterval,
+			StartLedger:         cfg.StartLedger,
+			RetentionLedgers:    cfg.RetentionLedgers,
+			PerContractResumers: ingest.ContractIngestSaver(pg),
 		}, log)
 
 		ingester.WithMetrics(m).WithTracer(tracer).WithPublisher(broker)
@@ -287,7 +287,7 @@ func runValidate() error {
 				// Find the password between // and @
 				afterSlash := strings.Index(redactedDBURL, "//")
 				if afterSlash >= 0 && afterSlash < afterAt {
-					passwordSection := redactedDBURL[afterSlash+2:afterAt]
+					passwordSection := redactedDBURL[afterSlash+2 : afterAt]
 					colonIdx := strings.Index(passwordSection, ":")
 					if colonIdx > 0 && colonIdx < len(passwordSection)-1 {
 						// Replace everything after the colon with ****
