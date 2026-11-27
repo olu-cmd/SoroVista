@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -145,6 +146,42 @@ func TestIndexRenders(t *testing.T) {
 	assert.Contains(t, body, "transfer")
 	// The retention caveat must be visible so an empty explorer is explicable.
 	assert.Contains(t, body, "only while running")
+}
+
+func TestEventSummariesTruncateAtRuneBoundaries(t *testing.T) {
+	e := sampleEvent()
+	topicText := strings.Repeat("日", 30)
+	valueText := strings.Repeat("😀", 50)
+	e.Topics = json.RawMessage(`[{"string":"` + topicText + `"}]`)
+	e.Value = json.RawMessage(`{"string":"` + valueText + `"}`)
+
+	rec := get(t, newTestServer(t, &fakeSource{
+		events: source.EventPage{Events: []source.Event{e}},
+		status: source.Status{Healthy: true},
+	}), "/")
+	require.Equal(t, http.StatusOK, rec.Code)
+	body := rec.Body.String()
+	assert.True(t, utf8.ValidString(body))
+	assert.Contains(t, body, strings.Repeat("日", 28)+"…")
+	assert.Contains(t, body, strings.Repeat("😀", 48)+"…")
+}
+
+func TestLayoutUsesSystemColorScheme(t *testing.T) {
+	src := &fakeSource{
+		event:  sampleEvent(),
+		status: source.Status{Healthy: true},
+	}
+	h := newTestServer(t, src)
+
+	for _, path := range []string{"/", "/events/" + sampleEvent().ID, "/no-such-page"} {
+		t.Run(path, func(t *testing.T) {
+			rec := get(t, h, path)
+			body := rec.Body.String()
+			assert.Contains(t, body, "@media (prefers-color-scheme: dark)")
+			assert.Contains(t, body, "--background:")
+			assert.Contains(t, body, "--text:")
+		})
+	}
 }
 
 func TestIndexShowsUnhealthyBanner(t *testing.T) {
@@ -359,21 +396,43 @@ func TestSearchRouting(t *testing.T) {
 		location string
 	}{
 		{"contract ID goes to the contract page", testContract, "/contracts/" + testContract},
-		{"lowercase contract ID is normalized", "cdlzfc3syjydzt7k67vz75hpjvieuvnixf47zg2fb2rmqqvu2hhgcysc", "/contracts/" + testContract},
+		{"lowercase contract ID is normalized", strings.ToLower(testContract), "/contracts/" + testContract},
+		{"surrounding whitespace is trimmed", "  \t" + testContract + "\n", "/contracts/" + testContract},
 		{"event TOID goes to the event page", "0000000100-0000000001", "/events/0000000100-0000000001"},
-		{"plain digits are treated as an event ID", "12345", "/events/12345"},
+		{"leading zeros are preserved in the redirect", "0001234567890123456-0000000001", "/events/0001234567890123456-0000000001"},
 		{"a partial ID falls back to a contract search", "CDLZ", "/contracts?search=CDLZ"},
+		{"an unrecognized word falls back to a contract search", "hello world", "/contracts?search=hello+world"},
+		{"a bare number falls back to a contract search", "12345", "/contracts?search=12345"},
 		{"empty query lists contracts", "", "/contracts"},
+		{"whitespace-only query lists contracts", " \t ", "/contracts"},
 	}
 
 	h := newTestServer(t, &fakeSource{status: source.Status{Healthy: true}})
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			rec := get(t, h, "/search?q="+tt.query)
+			rec := get(t, h, "/search?q="+url.QueryEscape(tt.query))
 			require.Equal(t, http.StatusSeeOther, rec.Code)
 			assert.Equal(t, tt.location, rec.Header().Get("Location"))
 		})
 	}
+}
+
+// TestSearchUnknownQueryRendersUsefulPage follows the redirect an unknown
+// query produces. A visitor who types a contract's nickname rather than its ID
+// should land on a search result with an explanation, not a bare 404.
+func TestSearchUnknownQueryRendersUsefulPage(t *testing.T) {
+	src := &fakeSource{status: source.Status{Healthy: true}}
+	h := newTestServer(t, src)
+
+	rec := get(t, h, "/search?q=nickname")
+	require.Equal(t, http.StatusSeeOther, rec.Code)
+
+	rec = get(t, h, rec.Header().Get("Location"))
+	require.Equal(t, http.StatusOK, rec.Code)
+	body := rec.Body.String()
+	assert.Contains(t, body, "No contracts to show")
+	assert.Contains(t, body, "nickname")
+	assert.NotContains(t, body, "Not found")
 }
 
 func TestPartialEventsReturnsFragmentOnly(t *testing.T) {
@@ -497,12 +556,30 @@ func TestClassifySearch(t *testing.T) {
 		query string
 		want  searchKind
 	}{
+		// Positive cases. Contract IDs arrive from block explorers in either
+		// case, and a paste routinely carries whitespace.
 		{"contract ID", testContract, searchContract},
+		{"lowercase contract ID", strings.ToLower(testContract), searchContract},
+		{"mixed-case contract ID", strings.ToLower(testContract[:1]) + testContract[1:], searchContract},
+		{"contract ID with surrounding whitespace", "\t " + testContract + " \n", searchContract},
 		{"event TOID", "0000000100-0000000001", searchEvent},
-		{"plain digits", "12345", searchEvent},
-		{"trailing dash is not an ID", "12345-", searchUnknown},
-		{"double dash is not an ID", "1-2-3", searchUnknown},
+		{"event TOID with leading zeros preserved", "0001234567890123456-0000000001", searchEvent},
+
+		// Empty input is not a contract. Treating it as one would send the
+		// visitor to a 404 for a record that cannot exist.
 		{"empty", "", searchUnknown},
+		{"whitespace only", " \t \n", searchUnknown},
+
+		// Near-misses: every one of these looks plausible and none is an ID.
+		{"contract ID one character short", testContract[:len(testContract)-1], searchUnknown},
+		{"contract ID one character long", testContract + "A", searchUnknown},
+		{"contract ID with base32-excluded 0", testContract[:len(testContract)-1] + "0", searchUnknown},
+		{"contract ID with base32-excluded 1", testContract[:len(testContract)-1] + "1", searchUnknown},
+		{"contract ID with base32-excluded 8", testContract[:len(testContract)-1] + "8", searchUnknown},
+		{"contract ID with base32-excluded 9", testContract[:len(testContract)-1] + "9", searchUnknown},
+		{"TOID missing its dash", "0001234567890123456", searchUnknown},
+		{"TOID with a trailing dash", "0001234567890123456-", searchUnknown},
+		{"TOID with two dashes", "1-2-3", searchUnknown},
 		{"partial contract", "CDLZ", searchUnknown},
 		{"words", "hello world", searchUnknown},
 	}

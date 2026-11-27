@@ -146,8 +146,34 @@ Aggregate event counts into contiguous half-open `[start, end)` time buckets ove
 | `topic` | Optional decoded topic filter (bare symbol or JSON object) |
 
 ```bash
-curl 'http://localhost:8080/api/events/buckets?from=2024-01-01T00:00:00Z&to=2024-01-01T06:00:00Z&interval=1h&type=contract'
+# Every event, optionally narrowed with contract_id
+curl 'http://localhost:8080/api/events/buckets?from=2026-08-02T00:00:00Z&to=2026-08-02T03:00:00Z&interval=1h&type=contract'
+
+# One contract's events; the contract ID comes from the path
+curl 'http://localhost:8080/api/contracts/CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC/buckets?from=2026-08-02T00:00:00Z&to=2026-08-02T03:00:00Z&interval=1h'
 ```
+
+Both endpoints return the same `BucketSeries` shape. Each bucket is the number of matching events whose `ledger_closed_at` fell in that half-open slice, so the counts sum to `total_events` across the requested range. Quiet hours are present with `count: 0`, and `approximate` is `false` when the counts come from an exact standalone-mode aggregate.
+
+```json
+{
+  "interval": "1h",
+  "from": "2026-08-02T00:00:00Z",
+  "to": "2026-08-02T03:00:00Z",
+  "total_events": 42,
+  "buckets": [
+    { "start": "2026-08-02T00:00:00Z", "end": "2026-08-02T01:00:00Z", "count": 17 },
+    { "start": "2026-08-02T01:00:00Z", "end": "2026-08-02T02:00:00Z", "count": 0 },
+    { "start": "2026-08-02T02:00:00Z", "end": "2026-08-02T03:00:00Z", "count": 25 }
+  ],
+  "approximate": false
+}
+```
+
+## Event responses and the token annotation
+
+Event objects returned by `GET /api/events`, `GET /api/contracts/{id}/events`, `GET /api/events/{id}` and the SSE stream may carry a `token` field describing the event as a SEP-41 token operation. It names the event and resolves its topics into `from`, `to` and `amount` slots. See [SEP-41 token annotation](token-events.md) for the recognised events, the per-event slot meanings and the caveat that the field describes an event's shape rather than verifying that a contract implements SEP-41.
+
 
 ## Pagination
 

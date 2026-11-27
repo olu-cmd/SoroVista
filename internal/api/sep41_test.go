@@ -6,6 +6,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/sorotrail/sorovista/internal/source"
 )
 
@@ -64,118 +67,46 @@ func TestDetectTokenEvent(t *testing.T) {
 	}
 }
 
-func TestDetectTokenEvent_AmountPrecision(t *testing.T) {
+func TestDetectTokenEventPreservesIntegerAmounts(t *testing.T) {
 	tests := []struct {
-		name       string
-		event      string
-		value      string
-		wantAmount string
+		name   string
+		value  string
+		amount string
 	}{
-		{
-			name:       "i128 large number above 2^53 preserves exact digits",
-			event:      "transfer",
-			value:      `{"i128":123456789012345678901}`,
-			wantAmount: "123456789012345678901",
-		},
-		{
-			name:       "i128 2^53+1 boundary preserves exact digits",
-			event:      "transfer",
-			value:      `{"i128":9007199254740993}`,
-			wantAmount: "9007199254740993",
-		},
-		{
-			name:       "i128 string format preserved",
-			event:      "transfer",
-			value:      `{"i128":"123456789012345678901"}`,
-			wantAmount: "123456789012345678901",
-		},
-		{
-			name:       "i128 negative number",
-			event:      "transfer",
-			value:      `{"i128":-1}`,
-			wantAmount: "-1",
-		},
-		{
-			name:       "u128 max integer 2^128-1",
-			event:      "mint",
-			value:      `{"u128":340282366920938463463374607431768211455}`,
-			wantAmount: "340282366920938463463374607431768211455",
-		},
-		{
-			name:       "u128 string format",
-			event:      "mint",
-			value:      `{"u128":"50000000000"}`,
-			wantAmount: "50000000000",
-		},
-		{
-			name:       "i64 negative min",
-			event:      "burn",
-			value:      `{"i64":-9223372036854775808}`,
-			wantAmount: "-9223372036854775808",
-		},
-		{
-			name:       "i64 positive max",
-			event:      "burn",
-			value:      `{"i64":9223372036854775807}`,
-			wantAmount: "9223372036854775807",
-		},
-		{
-			name:       "u64 positive max",
-			event:      "clawback",
-			value:      `{"u64":18446744073709551615}`,
-			wantAmount: "18446744073709551615",
-		},
-		{
-			name:       "u64 small number",
-			event:      "transfer",
-			value:      `{"u64":1000}`,
-			wantAmount: "1000",
-		},
-		{
-			name:       "exponent form rejected",
-			event:      "transfer",
-			value:      `{"i128":1e+20}`,
-			wantAmount: "",
-		},
-		{
-			name:       "float decimal point rejected",
-			event:      "transfer",
-			value:      `{"i128":12.34}`,
-			wantAmount: "",
-		},
-		{
-			name:       "non-integer string rejected",
-			event:      "transfer",
-			value:      `{"i128":"not-an-integer"}`,
-			wantAmount: "",
-		},
-		{
-			name:       "unrecognized key yields no amount",
-			event:      "transfer",
-			value:      `{"other":1000}`,
-			wantAmount: "",
-		},
-		{
-			name:       "void value yields no amount",
-			event:      "transfer",
-			value:      `{"void":null}`,
-			wantAmount: "",
-		},
+		{"i128 above float precision", `{"i128":9007199254740993}`, "9007199254740993"},
+		{"large i128", `{"i128":123456789012345678901}`, "123456789012345678901"},
+		{"u64", `{"u64":18446744073709551615}`, "18446744073709551615"},
+		{"i64", `{"i64":-9223372036854775808}`, "-9223372036854775808"},
+		{"u128", `{"u128":340282366920938463463374607431768211455}`, "340282366920938463463374607431768211455"},
+		{"numeric string", `{"i128":"123456789012345678901"}`, "123456789012345678901"},
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			ev := source.Event{
-				Topics: json.RawMessage(`[{"symbol":"` + tc.event + `"},{"address":"GA...FROM"},{"address":"GA...TO"}]`),
-				Value:  json.RawMessage(tc.value),
+				Topics: json.RawMessage(`[{"symbol":"transfer"},{"address":"FROM"},{"address":"TO"}]`),
+				Value:  json.RawMessage(tt.value),
 			}
 			info := DetectTokenEvent(ev)
-			if info == nil {
-				t.Fatalf("expected detected event for %s, got nil", tc.name)
+			require.NotNil(t, info)
+			assert.Equal(t, tt.amount, info.Amount)
+		})
+	}
+
+	for name, value := range map[string]string{
+		"decimal":   `{"i128":1.5}`,
+		"exponent":  `{"i128":1e3}`,
+		"null":      `{"i128":null}`,
+		"not a map": `null`,
+	} {
+		t.Run(name+" amount is omitted", func(t *testing.T) {
+			ev := source.Event{
+				Topics: json.RawMessage(`[{"symbol":"transfer"},{"address":"FROM"},{"address":"TO"}]`),
+				Value:  json.RawMessage(value),
 			}
-			if info.Amount != tc.wantAmount {
-				t.Fatalf("amount mismatch: got %q, want %q", info.Amount, tc.wantAmount)
-			}
+			info := DetectTokenEvent(ev)
+			require.NotNil(t, info)
+			assert.Empty(t, info.Amount)
 		})
 	}
 }

@@ -177,6 +177,8 @@ curl http://localhost:8080/health
 
 Set `OTEL_ENABLED=true` to export traces over OTLP/HTTP. Spans cover inbound HTTP requests, outbound RPC and SoroTrail calls, store queries and each ingest poll; W3C `traceparent` continues an inbound trace and is propagated onward. The request ID is attached to the request span, joining traces to log lines.
 
+If the UI is empty, `/health` returns `503`, or the logs carry a startup warning you do not recognise, see [Troubleshooting](docs/operations/troubleshooting.md). It starts with the empty explorer, which is the most common and least intuitive case.
+
 ## Networks
 
 A Stellar network's passphrase is its identity. `NETWORK` selects a preset — `testnet`, `mainnet` or `futurenet`, each carrying its public RPC endpoint and passphrase; `NETWORK=custom` takes `RPC_URL` + `NETWORK_PASSPHRASE` for private standalone networks. At startup SoroVista asks the RPC which network it belongs to and **refuses to start on a mismatch**, so a mainnet endpoint behind testnet configuration fails fast instead of quietly showing the wrong chain's activity as if the watched contracts simply had none.

@@ -43,8 +43,8 @@ var sep41Slots = map[string][2]int{
 // DetectTokenEvent reports the SEP-41 reading of an event, or nil when the
 // event does not match the layout. Matching is structural: first topic a
 // symbol naming a SEP-41 event, two address topics, and — for the
-// amount-bearing events — an i128 value. A contract that happens to emit a
-// transfer-shaped event without implementing SEP-41 is indistinguishable
+// amount-bearing events — an integer amount value. A contract that happens to
+// emit a transfer-shaped event without implementing SEP-41 is indistinguishable
 // from one that does, and the annotation is honest either way: it describes
 // the event's shape, not a verified interface claim.
 func DetectTokenEvent(ev source.Event) *TokenInfo {
@@ -55,13 +55,8 @@ func DetectTokenEvent(ev source.Event) *TokenInfo {
 	if err := json.Unmarshal(ev.Topics, &topics); err != nil {
 		return nil
 	}
-	var value any
-	if len(ev.Value) > 0 {
-		dec := json.NewDecoder(bytes.NewReader(ev.Value))
-		dec.UseNumber()
-		if err := dec.Decode(&value); err != nil {
-			return nil
-		}
+	if len(ev.Value) > 0 && !json.Valid(ev.Value) {
+		return nil
 	}
 
 	if len(topics) < 3 {
@@ -84,7 +79,7 @@ func DetectTokenEvent(ev source.Event) *TokenInfo {
 		return info
 	default:
 		info.Event = name
-		if amount, ok := valueAmount(value); ok {
+		if amount, ok := valueAmount(ev.Value); ok {
 			info.Amount = amount
 		}
 		return info
@@ -119,55 +114,52 @@ func topicAddress(topic any) (string, bool) {
 	return "", false
 }
 
-// amountKeys lists the integer value wrappers recognized as SEP-41 amounts,
-// checked in precedence order.
-var amountKeys = []string{"i128", "u128", "i64", "u64"}
-
-// valueAmount extracts an integer amount from a decoded event value. Wide
-// integers (i128, u128, i64, u64) arrive as either strings or JSON numbers.
-// Because the value is unmarshaled with UseNumber, JSON numbers arrive as
-// json.Number preserving their exact source digits without losing precision
-// through float64 or rendering in scientific notation.
-func valueAmount(value any) (string, bool) {
-	m, ok := value.(map[string]any)
-	if !ok {
+// valueAmount extracts an integer amount from a decoded event value. Reading
+// the raw JSON preserves digits that generic decoding would round through float64.
+func valueAmount(value json.RawMessage) (string, bool) {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(value, &m); err != nil {
 		return "", false
 	}
-	for _, k := range amountKeys {
-		v, exists := m[k]
-		if !exists {
+
+	for _, key := range []string{"i128", "u64", "i64", "u128"} {
+		raw, ok := m[key]
+		if !ok {
 			continue
 		}
-		switch val := v.(type) {
-		case json.Number:
-			s := val.String()
-			if isInteger(s) {
-				return s, true
+
+		raw = bytes.TrimSpace(raw)
+		if len(raw) > 0 && raw[0] == '"' {
+			var s string
+			if err := json.Unmarshal(raw, &s); err != nil {
+				return "", false
 			}
-		case string:
-			if isInteger(val) {
-				return val, true
-			}
+			return s, true
 		}
+
+		var n json.Number
+		if err := json.Unmarshal(raw, &n); err != nil || n == "" {
+			return "", false
+		}
+		if !isIntegerNumber(n.String()) {
+			return "", false
+		}
+		return n.String(), true
 	}
 	return "", false
 }
 
-// isInteger reports whether s is a valid decimal integer: an optional leading
-// minus sign followed by one or more ASCII digits, excluding exponents and
-// decimal points.
-func isInteger(s string) bool {
-	if len(s) == 0 {
+func isIntegerNumber(s string) bool {
+	if s == "" {
 		return false
 	}
-	start := 0
 	if s[0] == '-' {
-		start = 1
-		if len(s) == 1 {
-			return false
-		}
+		s = s[1:]
 	}
-	for i := start; i < len(s); i++ {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
 		if s[i] < '0' || s[i] > '9' {
 			return false
 		}

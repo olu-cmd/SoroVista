@@ -28,6 +28,40 @@ import (
 	"time"
 )
 
+// ProbeTimeout bounds health and readiness checks so a hung dependency cannot
+// stall a probe caller.
+const ProbeTimeout = 5 * time.Second
+
+// DependencyState is the machine-readable verdict for an individual dependency
+// or the overall source ("ok", "degraded", or "down").
+type DependencyState string
+
+const (
+	StateOK       DependencyState = "ok"
+	StateDegraded DependencyState = "degraded"
+	StateDown     DependencyState = "down"
+)
+
+// DependencyStatus describes the health of a single backend dependency.
+type DependencyStatus struct {
+	Healthy bool            `json:"healthy"`
+	Status  DependencyState `json:"status"`
+	Detail  string          `json:"detail,omitempty"`
+}
+
+var (
+	urlCredentialsPattern = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.-]*://)([^/\s@]+)@`)
+	kvPasswordPattern     = regexp.MustCompile(`(?i)(password|passwd|pwd|secret|token|api_key)\s*=\s*('[^']*'|"[^"]*"|\S+)`)
+)
+
+// SanitizeDetail scrubs credentials from a dependency error message before it
+// is exposed on unauthenticated health endpoints.
+func SanitizeDetail(detail string) string {
+	sanitized := urlCredentialsPattern.ReplaceAllString(detail, "${1}REDACTED@")
+	sanitized = kvPasswordPattern.ReplaceAllString(sanitized, "${1}=REDACTED")
+	return sanitized
+}
+
 // ErrNotFound is returned by GetEvent when no event has the requested ID.
 // Implementations must wrap or return this exact error so handlers can map it
 // to a 404 without knowing which backend produced it.
@@ -92,14 +126,9 @@ type EventQuery struct {
 	FromLedger int64 // inclusive
 	ToLedger   int64 // inclusive
 	// FromTime and ToTime bound events by their on-chain ledger close time
-	// (LedgerClosedAt), both inclusive. Zero means no constraint. They
-	// intersect with the ledger bounds when both kinds are supplied, so an
-	// event must satisfy every bound to match.
-	//
-	// These deliberately filter on LedgerClosedAt rather than CreatedAt: a
-	// backfilled row's ingest time is unrelated to when the event happened, so
-	// filtering on CreatedAt would give different answers on a backfilled
-	// instance than on a live one.
+	// (not ingest time). Both are inclusive at the lower bound and exclusive
+	// at the upper bound, matching the half-open convention of the buckets
+	// API. Zero means no bound.
 	FromTime time.Time
 	ToTime   time.Time
 	// Cursor continues a previous page. It is opaque: only the implementation
@@ -196,46 +225,17 @@ type BucketSeries struct {
 	Approximate bool `json:"approximate"`
 }
 
-// Severity values for Dependency.Severity. They let a caller or alert rule
-// tell a total outage from a partial one: an unreachable database means
-// SoroVista can serve nothing, while an unreachable RPC only stalls ingestion
-// and still leaves every stored event queryable.
-const (
-	// DependencyFatal means losing this dependency breaks the read paths.
-	DependencyFatal = "fatal"
-	// DependencyDegraded means the dependency is down but the explorer can
-	// still serve useful data from what it already holds.
-	DependencyDegraded = "degraded"
-)
-
-// Dependency is one backend component's health, reported separately so an
-// operator can see which of several checks failed without reading logs. Which
-// dependencies appear is decided by the EventSource: standalone mode reports
-// Postgres and Stellar RPC, upstream mode reports the SoroTrail indexer.
-type Dependency struct {
-	// Name is a stable machine-readable identifier such as "postgres" or
-	// "stellar_rpc". Treat it as part of the API contract.
-	Name string `json:"name"`
-	// Healthy is false when this dependency is unreachable or degraded.
-	Healthy bool `json:"healthy"`
-	// Severity is DependencyFatal or DependencyDegraded, and says what this
-	// dependency's failure means for the instance, not whether it is
-	// currently failing.
-	Severity string `json:"severity"`
-	// Detail explains a failure in sanitized, human-readable terms. It must
-	// never include credentials.
-	Detail string `json:"detail,omitempty"`
-}
-
 // Status describes a source's health and the extent of the history it holds.
 // The UI shows this prominently: standalone mode only sees events emitted
 // while it was running, which surprises people who expect a full explorer.
 type Status struct {
 	// Mode is the configured SOURCE_MODE, "rpc" or "sorotrail".
 	Mode string `json:"mode"`
-	// Healthy is false when any dependency is unreachable or degraded. It is
-	// the overall verdict: Dependencies carries the per-component breakdown.
+	// Healthy is false when the backend is unreachable or degraded.
 	Healthy bool `json:"healthy"`
+	// State distinguishes normal operation ("ok"), partial degradation where
+	// stored data remains queryable ("degraded"), and a fatal outage ("down").
+	State DependencyState `json:"state,omitempty"`
 	// Detail explains an unhealthy status, or adds context to a healthy one.
 	Detail string `json:"detail,omitempty"`
 	// LatestLedger is the newest ledger the backend knows about, if known.
@@ -243,27 +243,9 @@ type Status struct {
 	// RetentionNote is a human-readable caveat about history coverage, shown
 	// in the UI banner.
 	RetentionNote string `json:"retention_note,omitempty"`
-	// Dependencies is the per-component health breakdown. It is omitted only
-	// when an implementation reports no dependency checks at all.
-	Dependencies []Dependency `json:"dependencies,omitempty"`
-}
-
-var (
-	// urlUserinfo strips the user:password@ part of any URL embedded in an
-	// error, which is where a Postgres connection string carries credentials.
-	urlUserinfo = regexp.MustCompile(`([A-Za-z][A-Za-z0-9+.\-]*://)[^@/\s]+@`)
-	// credentialKV strips DSN-style key=value credentials, which pgx can
-	// quote in connection errors.
-	credentialKV = regexp.MustCompile(`(?i)\b(password|passwd|pwd|passfile|secret|token)\s*=\s*[^\s&;]+`)
-)
-
-// SanitizeDetail removes credentials from a detail string. Health responses
-// are unauthenticated, and a connection error can quote a connection string,
-// so every implementation must pass detail through this before reporting it.
-func SanitizeDetail(s string) string {
-	s = urlUserinfo.ReplaceAllString(s, "${1}[redacted]@")
-	s = credentialKV.ReplaceAllString(s, "${1}=[redacted]")
-	return s
+	// Dependencies reports each backend dependency separately: "database" and
+	// "rpc" in standalone mode, "sorotrail" in upstream mode.
+	Dependencies map[string]DependencyStatus `json:"dependencies,omitempty"`
 }
 
 // EventSource is the read-only interface every backend implements. All methods

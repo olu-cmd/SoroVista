@@ -28,17 +28,17 @@ func (s *Server) ReadyzHandler() http.HandlerFunc {
 			"status": status.Healthy,
 			"mode":   status.Mode,
 		}
-		// The per-dependency breakdown is additive: existing keys keep their
-		// meaning, and an alert can now tell a dead database (fatal) from a
-		// stalled RPC (degraded).
-		if len(status.Dependencies) > 0 {
-			out["dependencies"] = status.Dependencies
+		if status.State != "" {
+			out["state"] = status.State
 		}
 		if status.Detail != "" {
 			out["detail"] = status.Detail
 		}
 		if status.LatestLedger > 0 {
 			out["latest_ledger"] = status.LatestLedger
+		}
+		if len(status.Dependencies) > 0 {
+			out["dependencies"] = status.Dependencies
 		}
 		code := http.StatusOK
 		if !status.Healthy {

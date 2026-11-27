@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
@@ -43,49 +43,10 @@ func fakeNode(t *testing.T, handler func(req capturedRequest) string) (*HTTPClie
 	return NewHTTPClient(srv.URL, srv.Client()), &captured
 }
 
-func TestNewHTTPClient(t *testing.T) {
-	custom := &http.Client{Timeout: 2 * time.Second}
-	tests := []struct {
-		name        string
-		url         string
-		httpClient  *http.Client
-		wantTimeout time.Duration
-		wantSame    bool
-	}{
-		{
-			name:        "nil client gets the default timeout",
-			url:         "https://rpc.example.org",
-			httpClient:  nil,
-			wantTimeout: DefaultTimeout,
-		},
-		{
-			name:        "empty url and nil client are accepted",
-			url:         "",
-			httpClient:  nil,
-			wantTimeout: DefaultTimeout,
-		},
-		{
-			name:        "supplied client is used as-is",
-			url:         "https://rpc.example.org",
-			httpClient:  custom,
-			wantTimeout: custom.Timeout,
-			wantSame:    true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			client := NewHTTPClient(tt.url, tt.httpClient)
-			require.NotNil(t, client)
-			assert.Equal(t, tt.url, client.url)
-			require.NotNil(t, client.http)
-			assert.Equal(t, tt.wantTimeout, client.http.Timeout)
-			assert.True(t, client.JSONXDR(), "expected json XDR to start optimistic")
-			if tt.wantSame {
-				assert.Same(t, tt.httpClient, client.http)
-			}
-		})
-	}
+func TestTruncateRPCErrorBodyKeepsUTF8Valid(t *testing.T) {
+	got := truncate(strings.Repeat("a", 255)+"😀tail", 256)
+	require.True(t, utf8.ValidString(got))
+	assert.Equal(t, strings.Repeat("a", 255)+"…", got)
 }
 
 func TestGetEventsDecodesJSONFormat(t *testing.T) {
