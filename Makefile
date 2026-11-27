@@ -41,6 +41,9 @@ test-race:
 lint:
 	golangci-lint run
 
+vulncheck:
+	go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...
+
 fmt:
 	gofmt -w .
 

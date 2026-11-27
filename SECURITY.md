@@ -36,5 +36,7 @@ Out of scope:
 ## Hardening notes for operators
 
 - Run SoroVista on a trusted network or behind a reverse proxy with auth.
+- CI scans compiled Go packages for reachable known dependency vulnerabilities
+  with `govulncheck`; run `make vulncheck` to reproduce the check locally.
 - The API never mutates state; the worst a request can do is read
   chain-public data or waste resources. Rate-limit at the proxy.
