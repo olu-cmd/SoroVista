@@ -69,9 +69,10 @@ func TestListContractsEdgeCases(t *testing.T) {
 	}
 }
 
-// GetContractIngestState implements store.Store — returns empty state.
 func (s *stubStore) GetContractIngestState(context.Context, string) (store.ContractIngestState, error) {
 	return store.ContractIngestState{}, nil
 }
 
-func (s *stubStore) SaveContractIngestState(context.Context, store.ContractIngestState) error { return nil }
+func (s *stubStore) SaveContractIngestState(context.Context, store.ContractIngestState) error {
+	return nil
+}

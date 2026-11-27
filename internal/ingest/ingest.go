@@ -215,7 +215,7 @@ func (i *Ingester) pollOnce(ctx context.Context) error {
 		// Determine the overall start ledger as the minimum across all
 		// contracts' resume ledgers, so the RPC query covers enough range for
 		// every contract.
-		minLedger := uint32(latest.Sequence)
+		minLedger := latest.Sequence
 		for _, ledger := range resume {
 			if ledger < minLedger {
 				minLedger = ledger
@@ -415,14 +415,15 @@ func (i *Ingester) resumeLedger(ctx context.Context, latest uint32) (map[string]
 			if err != nil {
 				return nil, err
 			}
-			if cs.LastLedger > 0 {
+			switch {
+			case cs.LastLedger > 0:
 				// Resume from the per-contract cursor + 1.
 				resume[cid] = uint32(cs.LastLedger) + 1
-			} else if i.opts.StartLedger > 0 {
+			case i.opts.StartLedger > 0:
 				// No per-contract state yet, but StartLedger is set:
 				// start from the explicit start ledger.
 				resume[cid] = i.opts.StartLedger
-			} else {
+			default:
 				// No per-contract state and no StartLedger: fall back to
 				// the retention window / cold-start position.
 				if latest > i.opts.RetentionLedgers {
@@ -434,7 +435,7 @@ func (i *Ingester) resumeLedger(ctx context.Context, latest uint32) (map[string]
 		}
 		// Return the minimum resume ledger so the overall poll starts early
 		// enough for all contracts.
-		minLedger := uint32(latest)
+		minLedger := latest
 		for _, ledger := range resume {
 			if ledger < minLedger {
 				minLedger = ledger
@@ -460,7 +461,7 @@ func (i *Ingester) resumeLedger(ctx context.Context, latest uint32) (map[string]
 
 	// Cold start: reach back over the retention window, clamped at ledger 1.
 	if latest > i.opts.RetentionLedgers {
-		return map[string]uint32{"": uint32(latest - i.opts.RetentionLedgers)}, nil
+		return map[string]uint32{"": latest - i.opts.RetentionLedgers}, nil
 	}
 	return map[string]uint32{"": 1}, nil
 }
