@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"sync"
+	"time"
 
 	"github.com/sorotrail/sorovista/internal/rpc"
 	"github.com/sorotrail/sorovista/internal/source"
@@ -185,8 +186,11 @@ func (m *mockStore) EventBuckets(context.Context, source.BucketQuery) (source.Bu
 }
 
 func (m *mockStore) Stats(context.Context) (source.Stats, error) { return source.Stats{}, nil }
-func (m *mockStore) Ping(context.Context) error                  { return nil }
-func (m *mockStore) Close()                                      {}
+func (m *mockStore) PruneEvents(context.Context, time.Time) (int64, error) {
+	return 0, nil
+}
+func (m *mockStore) Ping(context.Context) error { return nil }
+func (m *mockStore) Close()                     {}
 
 // GetContractIngestState implements store.Store — returns empty state so
 // tests that don't set per-contract state get a cold start.

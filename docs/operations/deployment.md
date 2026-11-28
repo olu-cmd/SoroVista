@@ -156,23 +156,18 @@ go test ./deploy/helm/sorovista/test -run TestGoldenRender -update
 
 If you do run standalone mode, the same continuity consideration applies as any RPC-polling ingester: downtime beyond the RPC's retention window means a permanent gap in what SoroVista captured for that period. If continuous, gap-free history matters to you, prefer upstream mode against a SoroTrail instance that's already handling that concern.
 
-**Example:** Query `/api/stats` to verify the ingested ledger range and check for continuity:
+### Bounding storage with `EVENT_RETENTION`
+
+By default standalone mode keeps every event forever. Set `EVENT_RETENTION` to a duration to delete events whose on-chain `ledger_closed_at` is older than that horizon:
 
 ```bash
-curl http://localhost:8080/api/stats
+# Keep roughly 90 days of on-chain history and delete the rest.
+EVENT_RETENTION=2160h
 ```
 
-Sample response payload:
+The sweeper runs hourly in standalone mode, deletes in bounded batches so a first pass cannot lock the table for a long transaction, and never touches `ingest_state` — a restart still resumes from where ingestion stopped. Each sweep logs the number of rows removed, and the `sorovista_events_pruned_total` counter is exposed on `/metrics`.
 
-```json
-{
-  "total_events": 14200,
-  "contract_count": 85,
-  "first_ledger": 500000,
-  "last_ledger": 512000,
-  "approximate": false
-}
-```
+This is destructive and irreversible. Decide the horizon before enabling it, back up first, and prefer upstream mode if you need durable long history. `EVENT_RETENTION` is not related to `RETENTION_LEDGERS`: the latter only sets the cold-start reach-back for a fresh ingester and never deletes anything. Upstream mode has no local database and ignores both.
 
 ## Sizing
 

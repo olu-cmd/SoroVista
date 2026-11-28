@@ -370,46 +370,47 @@ func TestLoad(t *testing.T) {
 			},
 		},
 		{
-			name: "tracing is off by default",
+			name: "event retention defaults to keeping everything",
 			env:  map[string]string{"DATABASE_URL": "postgres://localhost/sorovista"},
 			check: func(t *testing.T, c Config) {
-				assert.False(t, c.OTelEnabled, "tracing must be opt-in")
-				assert.Equal(t, DefaultOTelSampleRate, c.OTelSampleRate)
-				assert.Equal(t, DefaultOTelServiceName, c.OTelServiceName)
-				assert.Equal(t, DefaultOTelEndpoint, c.OTelEndpoint)
+				assert.Zero(t, c.EventRetention)
 			},
 		},
 		{
-			name: "tracing configuration is parsed",
+			name: "event retention is parsed as a duration",
 			env: map[string]string{
-				"DATABASE_URL":                "postgres://localhost/sorovista",
-				"OTEL_ENABLED":                "true",
-				"OTEL_EXPORTER_OTLP_ENDPOINT": "collector:4318",
-				"OTEL_SAMPLE_RATE":            "0.25",
-				"OTEL_SERVICE_NAME":           "sorovista-edge",
+				"DATABASE_URL":    "postgres://localhost/sorovista",
+				"EVENT_RETENTION": "720h",
 			},
 			check: func(t *testing.T, c Config) {
-				assert.True(t, c.OTelEnabled)
-				assert.Equal(t, "collector:4318", c.OTelEndpoint)
-				assert.InDelta(t, 0.25, c.OTelSampleRate, 1e-9)
-				assert.Equal(t, "sorovista-edge", c.OTelServiceName)
+				assert.Equal(t, 720*time.Hour, c.EventRetention)
 			},
 		},
 		{
-			name: "an out-of-range sample rate is rejected",
+			name: "event retention period alias is accepted",
 			env: map[string]string{
-				"DATABASE_URL":     "postgres://localhost/sorovista",
-				"OTEL_SAMPLE_RATE": "1.5",
+				"DATABASE_URL":           "postgres://localhost/sorovista",
+				"EVENT_RETENTION_PERIOD": "48h",
 			},
-			wantErr: "invalid OTEL_SAMPLE_RATE",
+			check: func(t *testing.T, c Config) {
+				assert.Equal(t, 48*time.Hour, c.EventRetention)
+			},
 		},
 		{
-			name: "a non-boolean OTEL_ENABLED is rejected",
+			name: "invalid event retention is rejected",
 			env: map[string]string{
-				"DATABASE_URL": "postgres://localhost/sorovista",
-				"OTEL_ENABLED": "yes-please",
+				"DATABASE_URL":    "postgres://localhost/sorovista",
+				"EVENT_RETENTION": "30d",
 			},
-			wantErr: "invalid OTEL_ENABLED",
+			wantErr: "invalid EVENT_RETENTION",
+		},
+		{
+			name: "non-positive event retention is rejected",
+			env: map[string]string{
+				"DATABASE_URL":    "postgres://localhost/sorovista",
+				"EVENT_RETENTION": "-1h",
+			},
+			wantErr: "positive duration",
 		},
 	}
 

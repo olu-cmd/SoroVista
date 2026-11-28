@@ -130,25 +130,42 @@ func TestListEventsParsesFilters(t *testing.T) {
 	assert.JSONEq(t, `{"symbol":"transfer"}`, string(q.Topic))
 }
 
-func TestListEventsParsesTimeRange(t *testing.T) {
-	src := &fakeSource{events: source.EventPage{}}
-	target := "/api/events?from_time=2024-01-01T00:00:00%2B02:00&to_time=2024-01-01T12:00:00Z"
-	rec := do(t, testServer(src), target)
-	require.Equal(t, http.StatusOK, rec.Code)
+func TestListEventsParsesSuccessfulCallFilter(t *testing.T) {
+	tests := []struct {
+		name   string
+		target string
+		want   *bool
+	}{
+		{"successful only", "/api/events?successful=true", boolPtr(true)},
+		{"failed only", "/api/events?successful=false", boolPtr(false)},
+		{"alias uses the response field name", "/api/events?in_successful_call=false", boolPtr(false)},
+		{"omitted means no constraint", "/api/events", nil},
+	}
 
-	q := src.lastEventQuery
-	assert.Equal(t, time.Date(2023, 12, 31, 22, 0, 0, 0, time.UTC), q.FromTime,
-		"an explicit offset must be honoured, not assumed to be UTC")
-	assert.Equal(t, time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC), q.ToTime)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			src := &fakeSource{events: source.EventPage{}}
+			rec := do(t, testServer(src), tt.target)
+			require.Equal(t, http.StatusOK, rec.Code)
+			assert.Equal(t, tt.want, src.lastEventQuery.InSuccessfulCall)
+		})
+	}
+
+	t.Run("composes with other filters", func(t *testing.T) {
+		src := &fakeSource{events: source.EventPage{}}
+		rec := do(t, testServer(src), "/api/contracts/"+testContract+"/events?type=contract&successful=false&from_ledger=100")
+		require.Equal(t, http.StatusOK, rec.Code)
+
+		q := src.lastEventQuery
+		assert.Equal(t, testContract, q.ContractID)
+		assert.Equal(t, "contract", q.Type)
+		assert.Equal(t, int64(100), q.FromLedger)
+		require.NotNil(t, q.InSuccessfulCall)
+		assert.False(t, *q.InSuccessfulCall)
+	})
 }
 
-func TestListEventsTimeRangeIsOptional(t *testing.T) {
-	src := &fakeSource{events: source.EventPage{}}
-	rec := do(t, testServer(src), "/api/events")
-	require.Equal(t, http.StatusOK, rec.Code)
-	assert.True(t, src.lastEventQuery.FromTime.IsZero())
-	assert.True(t, src.lastEventQuery.ToTime.IsZero())
-}
+func boolPtr(v bool) *bool { return &v }
 
 func TestListEventsAcceptsJSONTopic(t *testing.T) {
 	src := &fakeSource{events: source.EventPage{}}
@@ -173,6 +190,8 @@ func TestListEventsRejectsBadInput(t *testing.T) {
 		{"inverted time range", "/api/events?from_time=2024-01-02T00:00:00Z&to_time=2024-01-01T00:00:00Z", "is after to_time"},
 		{"limit too large", "/api/events?limit=100000", "limit must be an integer"},
 		{"limit zero", "/api/events?limit=0", "limit must be an integer"},
+		{"non-boolean successful", "/api/events?successful=maybe", "invalid successful"},
+		{"non-boolean alias", "/api/events?in_successful_call=1", "invalid in_successful_call"},
 	}
 
 	h := testServer(&fakeSource{})

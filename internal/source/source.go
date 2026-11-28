@@ -131,6 +131,12 @@ type EventQuery struct {
 	// API. Zero means no bound.
 	FromTime time.Time
 	ToTime   time.Time
+	// InSuccessfulCall filters on whether the emitting call ultimately
+	// succeeded. nil means no constraint; true returns only events from
+	// successful calls and false only events from calls that reverted. The
+	// pointer is what makes all three states expressible — a plain bool could
+	// not tell "only failed" from "unset".
+	InSuccessfulCall *bool
 	// Cursor continues a previous page. It is opaque: only the implementation
 	// that produced it may interpret it.
 	Cursor string

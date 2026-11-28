@@ -8,9 +8,19 @@ Once you're on a contract's page, these are the ways to narrow down what you're 
 
 Every event is `contract`, `system`, or `diagnostic`. Most exploration is `contract` events — the ones a contract's own code emits. The type filter is a dropdown on the contract page, or `type=` on the API.
 
+## Filter by call outcome
+
+Every event records whether the contract call that emitted it ultimately succeeded. Soroban keeps events from calls that later reverted, so without this filter an event list overstates activity: a `transfer` emitted inside a reverted call did not move anything. Use **Call outcome** on the contract page (`successful=true` / `successful=false` on the API) to see only successful events, only reverted ones for debugging, or both by leaving it on `any`. Existing clients are unaffected because omitting the parameter still returns everything.
+
 ## Filter by ledger range
 
 Narrow to a window of activity using `from_ledger` / `to_ledger` — useful when you're investigating "what happened around ledger X" or comparing before/after a known event.
+
+**Example:** Filter a contract's events within a specific ledger window:
+
+```bash
+curl 'http://localhost:8080/api/contracts/CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC/events?from_ledger=500000&to_ledger=510000'
+```
 
 ## Filter by topic
 
@@ -20,15 +30,43 @@ Events are often filterable by their decoded topic — for example, only events 
 
 If you already have an event id (a TOID — you'll see these in event rows and in API responses), the global search accepts it directly and takes you to that event's full detail page.
 
+**Example:** Search for an event by its TOID in the search bar or fetch it directly via the API:
+
+```bash
+curl 'http://localhost:8080/api/events/0016880389704384512-0000000003'
+```
+
 ## Using the JSON API for the same queries
 
 Every filter available in the UI is available on `GET /api/contracts/{id}/events` as a query parameter, so you can script the same searches:
 
 ```bash
-curl 'http://localhost:8080/api/contracts/CC.../events?type=contract&from_ledger=500000&to_ledger=510000'
+curl 'http://localhost:8080/api/contracts/CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC/events?type=contract&from_ledger=500000&to_ledger=510000'
 ```
 
-This is useful for pulling a filtered event set into your own tooling rather than clicking through pages.
+Sample response payload:
+
+```json
+{
+  "events": [
+    {
+      "id": "0016880389704384512-0000000003",
+      "contract_id": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+      "ledger": 505000,
+      "type": "contract",
+      "tx_hash": "a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890",
+      "in_successful_call": true,
+      "topics": [
+        {"symbol": "transfer"}
+      ],
+      "value": {"i128": "1000"}
+    }
+  ],
+  "next_cursor": "0016880389704384512-0000000003"
+}
+```
+
+This is useful for pulling a filtered event set into your own tooling rather than clicking through pages. SEP-41 token annotations are derived per event, so they remain accurate under this filter — but a client listing token transfers will almost always want `successful=true` so reverted transfers do not appear as real ones.
 
 ## A practical pattern: investigating a specific transfer
 
