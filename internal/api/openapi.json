@@ -63,6 +63,9 @@
             "$ref": "#/components/parameters/EventType"
           },
           {
+            "$ref": "#/components/parameters/InSuccessfulCall"
+          },
+          {
             "$ref": "#/components/parameters/Topic"
           },
           {
@@ -205,6 +208,9 @@
             "$ref": "#/components/parameters/EventType"
           },
           {
+            "$ref": "#/components/parameters/InSuccessfulCall"
+          },
+          {
             "$ref": "#/components/parameters/Topic"
           },
           {
@@ -325,6 +331,9 @@
           },
           {
             "$ref": "#/components/parameters/EventType"
+          },
+          {
+            "$ref": "#/components/parameters/InSuccessfulCall"
           },
           {
             "$ref": "#/components/parameters/Topic"
@@ -683,18 +692,13 @@
         },
         "description": "Restrict to events produced by one transaction"
       },
-      "ExportFormat": {
-        "name": "format",
+      "InSuccessfulCall": {
+        "name": "successful",
         "in": "query",
         "schema": {
-          "type": "string",
-          "enum": [
-            "csv",
-            "ndjson"
-          ],
-          "default": "csv"
+          "type": "boolean"
         },
-        "description": "Export format. CSV has a stable header row and writes topics/value as JSON text inside the cell; NDJSON writes one annotated Event object per line."
+        "description": "`true` returns only events emitted by a contract call that ultimately succeeded; `false` returns only events from calls that reverted. Omit for both. `in_successful_call` is accepted as an alias."
       }
     },
     "responses": {

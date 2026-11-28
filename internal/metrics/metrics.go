@@ -24,6 +24,7 @@ type Metrics struct {
 	pollLag      prometheus.Gauge
 
 	eventsIngested prometheus.Counter
+	eventsPruned   prometheus.Counter
 	sincePollSec   prometheus.Gauge
 	httpDuration   *prometheus.HistogramVec
 	rateLimited    prometheus.Counter
@@ -58,6 +59,11 @@ func New() *Metrics {
 			Help: "Contract events ingested from the RPC and stored. Standalone mode only.",
 		}),
 
+		eventsPruned: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "sorovista_events_pruned_total",
+			Help: "Stored contract events deleted by the retention sweeper. Standalone mode only.",
+		}),
+
 		sincePollSec: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "sorovista_seconds_since_last_poll",
 			Help: "Seconds since the ingester last completed a cycle. Grows without bound when polling has stopped.",
@@ -75,7 +81,7 @@ func New() *Metrics {
 		}),
 	}
 	m.registry.MustRegister(m.pollsTotal, m.pollDuration, m.pollLag,
-		m.eventsIngested, m.sincePollSec, m.httpDuration, m.rateLimited)
+		m.eventsIngested, m.eventsPruned, m.sincePollSec, m.httpDuration, m.rateLimited)
 	return m
 }
 
@@ -142,6 +148,14 @@ func (m *Metrics) RecordEvents(count int64) {
 		return
 	}
 	m.eventsIngested.Add(float64(count))
+}
+
+// RecordPruned counts events deleted by one retention sweep.
+func (m *Metrics) RecordPruned(count int64) {
+	if m == nil {
+		return
+	}
+	m.eventsPruned.Add(float64(count))
 }
 
 // statusRecorder captures the status code a handler wrote, for the HTTP
